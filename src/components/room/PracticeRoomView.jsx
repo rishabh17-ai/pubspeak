@@ -280,7 +280,7 @@ export const PracticeRoomView = () => {
           background: 'rgba(11, 15, 25, 0.8)'
         }}
       >
-        {conversationHistory.map((msg) => {
+        {(conversationHistory || []).map((msg) => {
           const isUser = msg.sender === 'user';
           return (
             <div

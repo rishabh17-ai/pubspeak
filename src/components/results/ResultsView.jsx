@@ -17,6 +17,7 @@ export const ResultsView = () => {
     sessionTime,
     isEvaluating,
     evaluationResult,
+    noSpeechDetected,
     attemptCount,
     sessionAttempts
   } = useSimulator();
@@ -26,7 +27,52 @@ export const ResultsView = () => {
   const secs = sessionTime % 60;
   const formattedDuration = `${mins}m ${secs}s`;
 
-  // Loading state
+  // No speech detected — user never spoke
+  if (!isEvaluating && !evaluationResult && noSpeechDetected) {
+    return (
+      <div className="container" style={{ maxWidth: '600px', padding: '4rem 0', textAlign: 'center' }}>
+        <div className="glass-panel" style={{ padding: '3rem 2rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
+          <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: 'rgba(244, 63, 94, 0.15)', border: '2px solid rgba(244, 63, 94, 0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <AlertCircle size={36} style={{ color: '#fb7185' }} />
+          </div>
+
+          <div>
+            <h2 style={{ fontSize: '1.6rem', marginBottom: '0.5rem', color: '#fb7185' }}>No Speech Detected</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', lineHeight: 1.6, margin: 0 }}>
+              The session ended without any recorded speech or typed response.
+              <br /><br />
+              <strong style={{ color: 'var(--text-main)' }}>To get a real evaluation:</strong>
+            </p>
+          </div>
+
+          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1.25rem 1.5rem', textAlign: 'left', width: '100%' }}>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.65rem', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
+              <li style={{ display: 'flex', gap: '0.5rem' }}><span style={{ color: '#818cf8' }}>1.</span> Click <strong style={{ color: 'var(--text-main)' }}>"Start Speaking"</strong> and speak into your microphone</li>
+              <li style={{ display: 'flex', gap: '0.5rem' }}><span style={{ color: '#818cf8' }}>2.</span> OR type your response in the text box and click <strong style={{ color: 'var(--text-main)' }}>"Submit Response"</strong></li>
+              <li style={{ display: 'flex', gap: '0.5rem' }}><span style={{ color: '#818cf8' }}>3.</span> Your browser must allow microphone access for speech recognition</li>
+            </ul>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button className="btn btn-primary" onClick={handleTryAgain} style={{ padding: '0.75rem 2rem' }}>
+              <RotateCcw size={16} />
+              <span>Try Again</span>
+            </button>
+            <button className="btn btn-secondary" onClick={goToScenarioSelection} style={{ padding: '0.75rem 1.5rem' }}>
+              <LayoutGrid size={16} />
+              <span>New Scenario</span>
+            </button>
+            <button className="btn btn-secondary" onClick={goToDashboard} style={{ padding: '0.75rem 1.5rem' }}>
+              <Home size={16} />
+              <span>Dashboard</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Loading / Evaluating state
   if (isEvaluating || !evaluationResult) {
     return (
       <div className="container" style={{ maxWidth: '600px', padding: '4rem 0', textAlign: 'center' }}>
@@ -105,7 +151,7 @@ export const ResultsView = () => {
             {isPressureMode ? 'Pressure Performance Score' : 'Session Performance Results'}
           </h1>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', margin: 0 }}>
-            {isPressureMode ? 'Progressive Levels 1 → 5 Completed' : isAudienceMode ? `Topic: "${presentationTopic}" (${selectedAudiencePersonality.name})` : `Scenario: ${selectedScenario.name}`} &bull; Duration: <strong style={{ color: 'var(--text-main)' }}>{formattedDuration}</strong>
+            {isPressureMode ? 'Progressive Levels 1 → 5 Completed' : isAudienceMode ? `Topic: "${presentationTopic}" (${selectedAudiencePersonality?.name || 'AI Audience'})` : `Scenario: ${selectedScenario?.name || ''}`} &bull; Duration: <strong style={{ color: 'var(--text-main)' }}>{formattedDuration}</strong>
           </p>
         </div>
 
@@ -212,7 +258,7 @@ export const ResultsView = () => {
           </h3>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.85rem' }}>
-            {metricsList.map((m) => (
+            {(metricsList || []).map((m) => (
               <div
                 key={m.name}
                 style={{

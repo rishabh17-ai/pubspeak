@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { SCENARIOS, DIFFICULTY_CONFIGS, SESSION_ROUNDS, AI_AUDIENCE_PERSONALITIES, PRESENTATION_TOPICS, MOCK_RECENT_SESSIONS } from '../data/scenarios';
 import { getStoredSessions, saveSessionToProfile, calculateProgressMetrics } from '../services/progressStorage';
+import { speakText, stopSpeaking as stopTTS } from '../services/ttsService';
+import { saveSessionToFirestore, fetchUserSessions, computeAnalytics } from '../services/firestoreService';
+import { useAuth } from './AuthContext';
 
 const SimulatorContext = createContext();
 
@@ -13,6 +16,7 @@ export const PRESSURE_ROUNDS_CONFIG = [
 ];
 
 export const SimulatorProvider = ({ children }) => {
+  const { user } = useAuth();
   // Steps: 'DASHBOARD' | 'SCENARIO_SELECTION' | 'PRACTICE_SETUP' | 'PRACTICE_ROOM' | 'RESULTS_SCREEN' | 'PROFILE' | 'AUDIENCE_SETUP'
   const [currentStep, setCurrentStep] = useState('DASHBOARD');
   const [selectedScenario, setSelectedScenario] = useState(SCENARIOS[0]);
@@ -53,8 +57,10 @@ export const SimulatorProvider = ({ children }) => {
   // Final AI Evaluation Result
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [evaluationResult, setEvaluationResult] = useState(null);
+  const [noSpeechDetected, setNoSpeechDetected] = useState(false);
 
   const sendRef = useRef(null);
+  const finishRef = useRef(null);
   const diffConfig = DIFFICULTY_CONFIGS[selectedDifficulty] || DIFFICULTY_CONFIGS.MEDIUM;
 
   // Navigators
@@ -66,6 +72,7 @@ export const SimulatorProvider = ({ children }) => {
     setSessionAttempts([]);
     setImprovementTip('');
     setApiError(null);
+    setNoSpeechDetected(false);
   }, []);
 
   const goToScenarioSelection = useCallback(() => {
@@ -76,6 +83,7 @@ export const SimulatorProvider = ({ children }) => {
     setSessionAttempts([]);
     setImprovementTip('');
     setApiError(null);
+    setNoSpeechDetected(false);
   }, []);
 
   const goToAudienceSetup = useCallback(() => {
@@ -111,6 +119,7 @@ export const SimulatorProvider = ({ children }) => {
     setSessionTime(0);
     setEvaluationResult(null);
     setApiError(null);
+    setNoSpeechDetected(false);
     setRoundTimeRemaining(diffConfig.roundSpeakingTimeSeconds);
     setIsRoundTimerRunning(false);
     setCurrentTurn('AI');
@@ -145,6 +154,7 @@ export const SimulatorProvider = ({ children }) => {
     setSessionTime(0);
     setEvaluationResult(null);
     setApiError(null);
+    setNoSpeechDetected(false);
 
     const level1Config = PRESSURE_ROUNDS_CONFIG[0];
     setRoundTimeRemaining(level1Config.timeSeconds);
@@ -176,6 +186,7 @@ export const SimulatorProvider = ({ children }) => {
     setSessionTime(0);
     setEvaluationResult(null);
     setApiError(null);
+    setNoSpeechDetected(false);
 
     setRoundTimeRemaining(120);
     setIsRoundTimerRunning(true);
@@ -246,8 +257,12 @@ export const SimulatorProvider = ({ children }) => {
           if (prev <= 1) {
             clearInterval(interval);
             setTimeout(() => {
-              if (sendRef.current) {
-                sendRef.current(isPressureMode ? 'Pressure timer 0s expired!' : isAudienceMode ? 'Presentation timer completed!' : 'Time expired! [Auto-submitted speech response]');
+              if (isAudienceMode) {
+                // Audience mode: end session directly — never inject fake text
+                if (finishRef.current) finishRef.current();
+              } else if (sendRef.current) {
+                // Pressure / Standard mode: auto-submit forces the next round
+                sendRef.current(isPressureMode ? 'Pressure timer 0s expired!' : 'Time expired! [Auto-submitted speech response]');
               }
             }, 50);
             return 0;
@@ -336,6 +351,7 @@ export const SimulatorProvider = ({ children }) => {
       };
 
       setTranscript((prev) => [...prev, aiMsg]);
+      speakText(data.aiResponse);
     } catch (err) {
       console.warn('API Response error, setting retry state:', err.message);
       setApiError('Unable to reach server. Click "Retry Response" or continue.');
@@ -354,6 +370,7 @@ export const SimulatorProvider = ({ children }) => {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setTranscript((prev) => [...prev, aiMsg]);
+      speakText(fallbackText);
     } finally {
       setCurrentRound(nextRoundNum);
       if (isPressureMode && nextPressureCfg) {
@@ -367,6 +384,7 @@ export const SimulatorProvider = ({ children }) => {
   };
 
   sendRef.current = sendUserResponse;
+  finishRef.current = finishSession;
 
   // Retry last AI call on network error
   const retryLastAiCall = () => {
@@ -379,10 +397,21 @@ export const SimulatorProvider = ({ children }) => {
   const finishSession = async (finalTranscriptOverride) => {
     setIsRoundTimerRunning(false);
     setIsSpeaking(false);
-    setIsEvaluating(true);
     setCurrentStep('RESULTS_SCREEN');
 
     const sessionTranscript = finalTranscriptOverride || transcript;
+
+    // ── Guard: Never generate results if the user never actually spoke ──────────
+    const userTurns = sessionTranscript.filter((t) => t.sender === 'user');
+    if (userTurns.length === 0) {
+      setIsEvaluating(false);
+      setEvaluationResult(null);
+      setNoSpeechDetected(true);
+      return;
+    }
+
+    setNoSpeechDetected(false);
+    setIsEvaluating(true);
     let evalObj = null;
 
     try {
@@ -437,6 +466,11 @@ export const SimulatorProvider = ({ children }) => {
           attemptsCount: attemptCount,
           improvementDelta: sessionAttempts.length > 0 ? evalObj.overallScore - sessionAttempts[sessionAttempts.length - 1].score : 0
         };
+        // Save to Firestore (cloud) + localStorage (backup)
+        const userId = user?.uid;
+        saveSessionToFirestore(userId, newRecord).then((docId) => {
+          if (docId) console.log('[Firestore] Session saved, id:', docId);
+        });
         const updatedList = saveSessionToProfile(newRecord);
         setStoredSessions(updatedList);
       }
@@ -568,8 +602,11 @@ export const SimulatorProvider = ({ children }) => {
         retryLastAiCall,
         apiError,
         finishSession,
+        transcript,
+        sessionTime,
         isEvaluating,
-        evaluationResult
+        evaluationResult,
+        noSpeechDetected
       }}
     >
       {children}

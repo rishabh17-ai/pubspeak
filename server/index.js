@@ -17,9 +17,67 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
     service: 'VoxSim AI Conversation, Audience & Pressure Mode Engine',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    tts: !!process.env.ELEVENLABS_API_KEY,
+    ai: !!(process.env.GEMINI_API_KEY || process.env.AI_API_KEY),
   });
 });
+
+/**
+ * ElevenLabs TTS Proxy Endpoint
+ * Route: POST /api/tts/speak
+ * Security: API key stays on the server, browser receives only audio binary
+ */
+app.post('/api/tts/speak', async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || typeof text !== 'string' || text.length > 1000) {
+      return res.status(400).json({ error: 'Invalid text payload' });
+    }
+
+    const elevenKey = process.env.ELEVENLABS_API_KEY;
+    const voiceId = process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
+
+    if (!elevenKey || elevenKey === 'your_elevenlabs_api_key_here') {
+      return res.status(503).json({ error: 'ElevenLabs API key not configured' });
+    }
+
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'xi-api-key': elevenKey,
+      },
+      body: JSON.stringify({
+        text: text.slice(0, 1000),
+        model_id: 'eleven_turbo_v2',
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
+          style: 0.3,
+          use_speaker_boost: true,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('[TTS] ElevenLabs API error:', response.status, errText);
+      return res.status(response.status).json({ error: 'TTS generation failed' });
+    }
+
+    // Stream the audio binary directly back to the browser
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-cache');
+    const arrayBuffer = await response.arrayBuffer();
+    res.send(Buffer.from(arrayBuffer));
+
+  } catch (error) {
+    console.error('[TTS] Error in /api/tts/speak:', error);
+    res.status(500).json({ error: 'Server error generating TTS audio' });
+  }
+});
+
 
 /**
  * Server-Side AI Chat Endpoint
