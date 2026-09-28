@@ -48,6 +48,8 @@ export const SimulatorProvider = ({ children }) => {
   // Session & Evaluation State
   const [transcript, setTranscript] = useState([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isMicActive, setIsMicActive] = useState(false);
+  const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [currentTurn, setCurrentTurn] = useState('AI');
   const [sessionTime, setSessionTime] = useState(0);
   const [userInputText, setUserInputText] = useState('');
@@ -61,6 +63,8 @@ export const SimulatorProvider = ({ children }) => {
 
   const sendRef = useRef(null);
   const finishRef = useRef(null);
+  const liveUserTextRef = useRef(''); // Tracks the current live speech/typed text from PracticeRoomView
+  const setLiveUserText = useCallback((text) => { liveUserTextRef.current = text || ''; }, []);
   const diffConfig = DIFFICULTY_CONFIGS[selectedDifficulty] || DIFFICULTY_CONFIGS.MEDIUM;
 
   // Navigators
@@ -189,7 +193,7 @@ export const SimulatorProvider = ({ children }) => {
     setNoSpeechDetected(false);
 
     setRoundTimeRemaining(120);
-    setIsRoundTimerRunning(true);
+    setIsRoundTimerRunning(false); // Timer only starts when user presses "Start Speaking"
 
     const initialAudienceMsg = `[${personality.name} & ${personality.aiRole}]\nPresentation Topic: "${topic}"\n\nWelcome! The audience is seated and listening. You have 2 minutes for your presentation. Please begin speaking when ready!`;
 
@@ -261,8 +265,9 @@ export const SimulatorProvider = ({ children }) => {
                 // Audience mode: end session directly — never inject fake text
                 if (finishRef.current) finishRef.current();
               } else if (sendRef.current) {
-                // Pressure / Standard mode: auto-submit forces the next round
-                sendRef.current(isPressureMode ? 'Pressure timer 0s expired!' : 'Time expired! [Auto-submitted speech response]');
+                // Use whatever the user actually spoke/typed, or a neutral fallback
+                const spokenText = liveUserTextRef.current.trim();
+                sendRef.current(spokenText || '[No response — timer expired]');
               }
             }, 50);
             return 0;
@@ -274,8 +279,8 @@ export const SimulatorProvider = ({ children }) => {
     return () => clearInterval(interval);
   }, [isRoundTimerRunning, currentTurn, currentStep, isAudienceMode, isPressureMode]);
 
-  const startSpeaking = useCallback(() => setIsSpeaking(true), []);
-  const stopSpeaking = useCallback(() => setIsSpeaking(false), []);
+  const startSpeaking = useCallback(() => { setIsSpeaking(true); setIsAiSpeaking(true); }, []);
+  const stopSpeaking = useCallback(() => { setIsSpeaking(false); setIsAiSpeaking(false); }, []);
 
   // Send User Response
   const sendUserResponse = async (text) => {
@@ -285,6 +290,7 @@ export const SimulatorProvider = ({ children }) => {
     setApiError(null);
     const responseText = text || userInputText || 'Recorded speech response provided.';
     setLastUserResponse(responseText);
+    liveUserTextRef.current = ''; // Clear so next round's auto-submit doesn't reuse stale text
 
     const userMsg = {
       id: `msg-user-${Date.now()}`,
@@ -321,6 +327,7 @@ export const SimulatorProvider = ({ children }) => {
       const res = await fetch('/api/speaking/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(15000),
         body: JSON.stringify({
           scenario: isPressureMode ? 'Pressure Mode Challenge' : isAudienceMode ? 'AI Audience Presentation' : selectedScenario.name,
           difficulty: selectedDifficulty,
@@ -351,7 +358,9 @@ export const SimulatorProvider = ({ children }) => {
       };
 
       setTranscript((prev) => [...prev, aiMsg]);
-      speakText(data.aiResponse);
+      setIsAiSpeaking(true);
+      await speakText(data.aiResponse);
+      setIsAiSpeaking(false);
     } catch (err) {
       console.warn('API Response error, setting retry state:', err.message);
       setApiError('Unable to reach server. Click "Retry Response" or continue.');
@@ -370,7 +379,9 @@ export const SimulatorProvider = ({ children }) => {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setTranscript((prev) => [...prev, aiMsg]);
-      speakText(fallbackText);
+      setIsAiSpeaking(true);
+      await speakText(fallbackText);
+      setIsAiSpeaking(false);
     } finally {
       setCurrentRound(nextRoundNum);
       if (isPressureMode && nextPressureCfg) {
@@ -384,7 +395,6 @@ export const SimulatorProvider = ({ children }) => {
   };
 
   sendRef.current = sendUserResponse;
-  finishRef.current = finishSession;
 
   // Retry last AI call on network error
   const retryLastAiCall = () => {
@@ -418,6 +428,7 @@ export const SimulatorProvider = ({ children }) => {
       const res = await fetch('/api/speaking/evaluate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(12000),
         body: JSON.stringify({
           scenario: isPressureMode ? 'Pressure Mode Challenge' : isAudienceMode ? 'AI Audience Presentation' : selectedScenario.name,
           difficulty: selectedDifficulty,
@@ -476,6 +487,8 @@ export const SimulatorProvider = ({ children }) => {
       }
     }
   };
+
+  finishRef.current = finishSession;
 
   const getFallbackEvaluation = () => {
     const prevScore = sessionAttempts.length > 0 ? sessionAttempts[sessionAttempts.length - 1].score : 75;
@@ -606,7 +619,13 @@ export const SimulatorProvider = ({ children }) => {
         sessionTime,
         isEvaluating,
         evaluationResult,
-        noSpeechDetected
+        noSpeechDetected,
+        isMicActive,
+        setIsMicActive,
+        isAiSpeaking,
+        currentTurn,
+        setIsRoundTimerRunning,
+        setLiveUserText
       }}
     >
       {children}

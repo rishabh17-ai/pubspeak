@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { RotateCcw, LayoutGrid, Home, Award, CheckCircle2, AlertCircle, Bot, BookOpen, Sparkles, Loader2, TrendingUp, Zap, Flame } from 'lucide-react';
 import { useSimulator } from '../../context/SimulatorContext';
 import { GaugeScore } from '../common/GaugeScore';
@@ -21,6 +21,17 @@ export const ResultsView = () => {
     attemptCount,
     sessionAttempts
   } = useSimulator();
+
+  // Safety net: if evaluating for more than 15s with no result, show timeout UI
+  const [evalTimedOut, setEvalTimedOut] = useState(false);
+  useEffect(() => {
+    if (!isEvaluating) {
+      setEvalTimedOut(false);
+      return;
+    }
+    const timer = setTimeout(() => setEvalTimedOut(true), 15000);
+    return () => clearTimeout(timer);
+  }, [isEvaluating]);
 
   // Format session time
   const mins = Math.floor(sessionTime / 60);
@@ -47,8 +58,8 @@ export const ResultsView = () => {
 
           <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '1.25rem 1.5rem', textAlign: 'left', width: '100%' }}>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.65rem', fontSize: '0.88rem', color: 'var(--text-muted)' }}>
-              <li style={{ display: 'flex', gap: '0.5rem' }}><span style={{ color: '#818cf8' }}>1.</span> Click <strong style={{ color: 'var(--text-main)' }}>"Start Speaking"</strong> and speak into your microphone</li>
-              <li style={{ display: 'flex', gap: '0.5rem' }}><span style={{ color: '#818cf8' }}>2.</span> OR type your response in the text box and click <strong style={{ color: 'var(--text-main)' }}>"Submit Response"</strong></li>
+              <li style={{ display: 'flex', gap: '0.5rem' }}><span style={{ color: '#818cf8' }}>1.</span> Click <strong style={{ color: 'var(--text-main)' }}>&quot;Start Speaking&quot;</strong> and speak into your microphone</li>
+              <li style={{ display: 'flex', gap: '0.5rem' }}><span style={{ color: '#818cf8' }}>2.</span> OR type your response in the text box and click <strong style={{ color: 'var(--text-main)' }}>&quot;Submit Response&quot;</strong></li>
               <li style={{ display: 'flex', gap: '0.5rem' }}><span style={{ color: '#818cf8' }}>3.</span> Your browser must allow microphone access for speech recognition</li>
             </ul>
           </div>
@@ -61,6 +72,35 @@ export const ResultsView = () => {
             <button className="btn btn-secondary" onClick={goToScenarioSelection} style={{ padding: '0.75rem 1.5rem' }}>
               <LayoutGrid size={16} />
               <span>New Scenario</span>
+            </button>
+            <button className="btn btn-secondary" onClick={goToDashboard} style={{ padding: '0.75rem 1.5rem' }}>
+              <Home size={16} />
+              <span>Dashboard</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Timed out waiting for evaluation — server is unreachable
+  if (evalTimedOut) {
+    return (
+      <div className="container" style={{ maxWidth: '600px', padding: '4rem 0', textAlign: 'center' }}>
+        <div className="glass-panel" style={{ padding: '3rem 2rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
+          <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: 'rgba(245, 158, 11, 0.15)', border: '2px solid rgba(245, 158, 11, 0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <AlertCircle size={36} style={{ color: '#fbbf24' }} />
+          </div>
+          <h2 style={{ fontSize: '1.5rem', marginBottom: '0.25rem', color: '#fbbf24' }}>Server Unreachable</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', lineHeight: 1.6, margin: 0, maxWidth: '420px' }}>
+            The evaluation server is not responding (port 5000 may not be running). Your practice session was still recorded.
+            <br /><br />
+            Start the backend server with <code style={{ background: 'rgba(255,255,255,0.08)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>npm run dev:all</code> and try again.
+          </p>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button className="btn btn-primary" onClick={handleTryAgain} style={{ padding: '0.75rem 2rem' }}>
+              <RotateCcw size={16} />
+              <span>Try Again</span>
             </button>
             <button className="btn btn-secondary" onClick={goToDashboard} style={{ padding: '0.75rem 1.5rem' }}>
               <Home size={16} />

@@ -109,6 +109,7 @@ app.post('/api/speaking/chat', async (req, res) => {
           const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(10000),
             body: JSON.stringify({
               contents: [
                 {
@@ -183,6 +184,7 @@ app.post('/api/speaking/evaluate', async (req, res) => {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(10000),
           body: JSON.stringify({
             contents: [
               {
@@ -427,6 +429,25 @@ function generateStrictRuleBasedEvaluation({ scenario, difficulty, aiRole, trans
   };
 }
 
-app.listen(PORT, () => {
-  console.log(`[LMS Simulator Server] Hardened AI Engine running securely on port ${PORT}`);
-});
+// Try to listen on PORT, auto-increment if already in use (handles rapid restarts)
+const startServer = (port) => {
+  const server = app.listen(port, () => {
+    console.log(`[LMS Simulator Server] Hardened AI Engine running securely on port ${port}`);
+    if (port !== parseInt(process.env.PORT || '5000', 10)) {
+      console.log(`[LMS Simulator Server] NOTE: Default port was busy, using port ${port} instead.`);
+      console.log(`[LMS Simulator Server] Update your Vite proxy config if needed: proxy target → http://localhost:${port}`);
+    }
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`[Server] Port ${port} is in use — trying port ${port + 1}...`);
+      startServer(port + 1);
+    } else {
+      console.error('[Server] Fatal error:', err);
+      process.exit(1);
+    }
+  });
+};
+
+startServer(parseInt(process.env.PORT || '5000', 10));

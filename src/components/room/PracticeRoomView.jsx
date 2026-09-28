@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Mic, MicOff, Send, Clock, Square, Bot, User, Volume2, Sparkles, AlertCircle, Info, Flame, ChevronRight, RefreshCw, Loader2 } from 'lucide-react';
 import { useSimulator, PRESSURE_ROUNDS_CONFIG } from '../../context/SimulatorContext';
 import { useSpeechRecognition } from '../../hooks/useSpeechRecognition';
@@ -21,7 +21,9 @@ export const PracticeRoomView = () => {
     sendUserResponse,
     retryLastAiCall,
     apiError,
-    finishSession
+    finishSession,
+    setIsRoundTimerRunning,
+    setLiveUserText
   } = useSimulator();
 
   // Web Speech API hook
@@ -37,31 +39,44 @@ export const PracticeRoomView = () => {
 
   // Local text state for fallback & manual editing
   const [manualText, setManualText] = useState('');
+  const [isStartingMic, setIsStartingMic] = useState(false); // async mic permission in-progress
   const scrollRef = useRef(null);
 
-  // Sync live speech transcript to input box when recording
+  // Sync live speech transcript to input box — always while listening
   useEffect(() => {
-    if (isListening && speechTranscript) {
-      setManualText(speechTranscript);
+    if (isListening) {
+      // Keep overwriting with latest transcript (includes interim results)
+      setManualText(speechTranscript || '');
     }
   }, [speechTranscript, isListening]);
+
+  // Keep context's liveUserTextRef in sync so timer auto-submit uses the real speech
+  useEffect(() => {
+    setLiveUserText(manualText);
+  }, [manualText, setLiveUserText]);
 
   // Auto-scroll conversation stream to bottom
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [conversationHistory, currentTurn, isListening]);
 
-  // Handle Start Speaking
-  const handleStartSpeaking = () => {
+  // Handle Start Speaking — requests mic permission then kicks off timer for audience mode
+  const handleStartSpeaking = useCallback(async () => {
     setManualText('');
     resetTranscript();
-    startListening();
-  };
+    setIsStartingMic(true);
+    await startListening(); // async: getUserMedia permission prompt happens here
+    setIsStartingMic(false);
+    // In Audience mode the timer only starts when the user begins speaking
+    if (isAudienceMode && setIsRoundTimerRunning) {
+      setIsRoundTimerRunning(true);
+    }
+  }, [startListening, resetTranscript, isAudienceMode, setIsRoundTimerRunning]);
 
   // Handle Stop Speaking
-  const handleStopSpeaking = () => {
+  const handleStopSpeaking = useCallback(() => {
     stopListening();
-  };
+  }, [stopListening]);
 
   // Handle Submit Response
   const handleSubmit = (e) => {
@@ -75,6 +90,7 @@ export const PracticeRoomView = () => {
     sendUserResponse(manualText);
     setManualText('');
     resetTranscript();
+    setLiveUserText(''); // Clear the live text ref after manual submit
   };
 
   // Round info
@@ -350,7 +366,7 @@ export const PracticeRoomView = () => {
             <button
               className="btn btn-primary"
               onClick={handleStartSpeaking}
-              disabled={currentTurn !== 'USER'}
+              disabled={currentTurn !== 'USER' || isStartingMic}
               aria-label="Start speaking recording"
               style={{
                 padding: '0.75rem 2rem',
@@ -359,8 +375,11 @@ export const PracticeRoomView = () => {
                 opacity: currentTurn !== 'USER' ? 0.5 : 1
               }}
             >
-              <Mic size={20} />
-              <span>Start Speaking</span>
+              {isStartingMic ? (
+                <><Loader2 size={20} className="animate-spin" /><span>Requesting Microphone...</span></>
+              ) : (
+                <><Mic size={20} /><span>Start Speaking</span></>
+              )}
             </button>
           ) : (
             <button
@@ -380,8 +399,11 @@ export const PracticeRoomView = () => {
 
           {isListening && (
             <span style={{ fontSize: '0.85rem', color: 'var(--accent-rose)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-rose)', display: 'inline-block' }} />
-              Live Recording ({roundTimeRemaining}s left)...
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-rose)', display: 'inline-block' }} className="animate-pulse" />
+              {isAudienceMode
+                ? `Presenting... ${roundTimeRemaining}s remaining`
+                : `Live Recording (${roundTimeRemaining}s left)...`
+              }
             </span>
           )}
         </div>
